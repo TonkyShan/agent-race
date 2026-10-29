@@ -131,7 +131,8 @@ function run(cmd: string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs: numb
 function diffOf(dir: string, base: string) {
   git(dir, 'add', '-A'); // stage new files too, so they show up in the diff
   // caches left behind when an agent runs the code to check its work aren't part of the answer
-  const pathspec = ['--', '.', ':(exclude,glob)**/__pycache__/**', ':(exclude,glob)**/*.pyc', ':(exclude,glob)**/.DS_Store'];
+  // node_modules may be a symlink made by --setup
+  const pathspec = ['--', '.', ':(exclude,glob)**/__pycache__/**', ':(exclude,glob)**/*.pyc', ':(exclude,glob)**/.DS_Store', ':(exclude)node_modules'];
   const numstat = git(dir, 'diff', '--cached', '--numstat', base, ...pathspec).trim();
   let added = 0;
   let removed = 0;
