@@ -2,7 +2,7 @@
 // run them in parallel, and write a Markdown report comparing what they did.
 //
 //   node src/race.ts --repo ~/code/app --task "Add a --json flag to the CLI" [--test "npm test"]
-//                    [--agents claude,codex] [--base HEAD] [--timeout 20] [--claude-model M] [--codex-model M] [--setup "<cmd>"]
+//                    [--agents claude,codex] [--base HEAD] [--timeout 20] [--claude-model M] [--codex-model M] [--setup "<cmd>"] [--no-proxy codex]
 
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -23,7 +23,6 @@ type Result = {
 
 type Agent = {
   command: (task: string, dir: string, model?: string) => string[];
-  env?: (env: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
   parse: (stdout: string) => { message: string; stats: Record<string, string | number> };
 };
 
@@ -63,8 +62,6 @@ const AGENTS: Record<string, Agent> = {
   },
   codex: {
     command: (task, dir, model) => ['codex', 'exec', '--json', '--dangerously-bypass-approvals-and-sandbox', '-C', dir, ...(model ? ['-m', model] : []), task],
-    // codex talks to an internal endpoint that must not go through the proxy
-    env: withoutProxy,
     parse: (out) => {
       let message = '';
       let usage: Record<string, number> = {};
@@ -92,7 +89,7 @@ function args() {
   const repo = get('--repo');
   const task = get('--task');
   if (!repo || !task) {
-    console.error('usage: node src/race.ts --repo <path> --task "<task>" [--test "<cmd>"] [--agents claude,codex] [--base HEAD] [--timeout 20] [--claude-model M] [--codex-model M] [--setup "<cmd>"]');
+    console.error('usage: node src/race.ts --repo <path> --task "<task>" [--test "<cmd>"] [--agents claude,codex] [--base HEAD] [--timeout 20] [--claude-model M] [--codex-model M] [--setup "<cmd>"] [--no-proxy codex]');
     process.exit(2);
   }
   return {
@@ -100,6 +97,8 @@ function args() {
     task,
     test: get('--test'),
     setup: get('--setup'), // run in each worktree before the agents start, e.g. linking node_modules
+    // agents whose API isn't reachable through the proxy in your environment (e.g. an internal endpoint)
+    noProxy: (get('--no-proxy', '') as string).split(',').filter(Boolean),
     agents: (get('--agents', 'claude,codex') as string).split(','),
     base: get('--base', 'HEAD') as string,
     models: { claude: get('--claude-model'), codex: get('--codex-model') } as Record<string, string | undefined>,
@@ -166,7 +165,8 @@ async function race() {
       git(opt.repo, 'worktree', 'add', '--detach', dir, base);
       if (opt.setup) await run(['sh', '-c', opt.setup], dir, process.env, 5 * 60_000);
       const start = Date.now();
-      const r = await run(agent.command(opt.task, dir, opt.models[name]), dir, agent.env ? agent.env(process.env) : process.env, opt.timeoutMin * 60_000);
+      const env = opt.noProxy.includes(name) ? withoutProxy(process.env) : process.env;
+      const r = await run(agent.command(opt.task, dir, opt.models[name]), dir, env, opt.timeoutMin * 60_000);
       const seconds = Math.round((Date.now() - start) / 1000);
       writeFileSync(join(runDir, `${name}.stdout.log`), r.stdout);
       writeFileSync(join(runDir, `${name}.stderr.log`), r.stderr);
